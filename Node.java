@@ -1,6 +1,7 @@
 import java.io.*;
 import java.net.*;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -9,12 +10,14 @@ class Node extends Thread {
     private final int port;
     private final List<Integer> otherNodePorts;
     private final ExecutorService executor;
+    private final Map<Integer, Boolean> acknowledgements;
 
     public Node(int id, int port, List<Integer> otherNodePorts) {
         this.id = id;
         this.port = port;
         this.otherNodePorts = otherNodePorts;
         this.executor = Executors.newFixedThreadPool(5); // Para lidar com múltiplas conexões
+        this.acknowledgements = new ConcurrentHashMap<>();
     }
 
     @Override
@@ -43,7 +46,12 @@ class Node extends Thread {
                         System.out.println("Nó " + id + ": Falha ao enviar mensagem para porta " + otherPort);
                     }
                 }
-                Thread.sleep(2000); // Envia mensagens a cada 2 segundos
+                // Aguarda confirmação de todos os nós
+                waitForAcknowledgements();
+
+                // Após receber todas as confirmações, limpa o mapa de acknowledgements
+                acknowledgements.clear();
+                Thread.sleep(10000); // Envia mensagens a cada 10 segundos
             }
         } catch (InterruptedException e) {
             System.out.println("Nó " + id + " encerrado.");
@@ -51,13 +59,26 @@ class Node extends Thread {
     }
 
     private void handleClient(Socket clientSocket) {
-        try (BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()))) {
+        try (BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+             PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true)) {
             String message;
             while ((message = in.readLine()) != null) {
                 System.out.println("Nó " + id + " recebeu: " + message);
+                // Envia confirmação de recebimento
+                out.println("ACK de nó " + id);
+                // Marca que o nó recebeu a mensagem
+                acknowledgements.put(id, true);
             }
         } catch (IOException e) {
             System.out.println("Erro ao processar mensagem no nó " + id + ": " + e.getMessage());
         }
+    }
+
+    private void waitForAcknowledgements() throws InterruptedException {
+        // Aguarda até que todas as confirmações de recebimento sejam recebidas
+        while (acknowledgements.size() < otherNodePorts.size()) {
+            Thread.sleep(100); // Espera por um curto período antes de verificar novamente
+        }
+        System.out.println("Nó " + id + " recebeu confirmações de todos os nós.");
     }
 }
